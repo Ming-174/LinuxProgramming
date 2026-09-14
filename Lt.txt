@@ -1,0 +1,3 @@
+Name:Kiriko Tel:1000 Address:Jp
+Name:D.va Tel:1001 Address:Kr
+Name:Juno Tel:1002 Address:Mark
