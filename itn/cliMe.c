@@ -5,6 +5,8 @@
 #include<sys/socket.h>
 #include<unistd.h>
 #include<stdint.h>
+#include<pthread.h>
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 void send_package(int fd, char* buf) {
 	uint32_t len = htonl(strlen(buf));
 	send(fd, &len, sizeof(len), 0);
@@ -36,21 +38,11 @@ int recv_package(int fd, char* buf, int max_len) {
 	
 	return r;
 }
-int main() {
-	int client_fd = socket(AF_INET, SOCK_STREAM, 0);
-	struct sockaddr_in addr;
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(8888);
-	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
 
-	connect(client_fd, (struct sockaddr*)&addr, sizeof(addr));
-
+void* handler(void* arg) {
+	int client_fd = (int)(intptr_t)arg;
 	while (1) {
 		char buf[1024] = { 0 };
-		char Tell[1024];
-		scanf("%s", Tell);
-		send_package(client_fd, Tell);
-		
 		int len = recv_package(client_fd, buf, sizeof(buf));
 
 		if (len == 0) {
@@ -67,5 +59,23 @@ int main() {
 		}
 		buf[len] = '\0';
 		printf("%s\n", buf);
+	}
+}
+int main() {
+	int client_fd = socket(AF_INET, SOCK_STREAM, 0);
+	struct sockaddr_in addr;
+	addr.sin_family = AF_INET;
+	addr.sin_port = htons(8888);
+	inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+
+	connect(client_fd, (struct sockaddr*)&addr, sizeof(addr));
+
+	pthread_t tid;
+	pthread_create(&tid, NULL, &handler, (void*)(intptr_t)client_fd);
+	pthread_detach(tid);
+	while (1) {
+		char Tell[1024];
+		scanf("%s", Tell);
+		send_package(client_fd, Tell);
 	}
 }

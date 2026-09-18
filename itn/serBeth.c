@@ -6,6 +6,45 @@
 #include<string.h>
 #include<stdint.h>
 #include<pthread.h>
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
+int clients[100];
+int Client_count = 0;
+
+int add_client(int fd) {
+	pthread_mutex_lock(&mutex);
+	for (int i = 0; i < 100; i++) {
+		if (clients[i] == -1) {
+			clients[i] = fd;
+			Client_count++;
+			printf("Client %d online,Total clients:%d\n", fd, Client_count);
+			pthread_mutex_unlock(&mutex);
+			return 1;
+		}
+	}
+	pthread_mutex_unlock(&mutex);
+	printf("Clients amount is full\n");
+	close(fd);
+	return -1;
+}
+
+void remove_client(int fd) {
+	pthread_mutex_lock(&mutex);
+	for (int i = 0; i < 100; i++) {
+		if (clients[i] == fd) {
+			clients[i] = -1;
+			Client_count--;
+			printf("Client %d is removed\n", fd);
+			pthread_mutex_unlock(&mutex);
+			close(fd);
+			return;
+		}
+	}
+	printf("Can't find %d", fd);
+	pthread_mutex_unlock(&mutex);
+}
+
 //类型char*可以按照一字节的大小推进，使得循环读取可以按照1字节的单位进行
 int read_exact(int fd, char* buf, size_t size) {
 	ssize_t got = 0;
@@ -39,10 +78,27 @@ void send_package(int fd, char* buf) {
 	send(fd, buf, strlen(buf),0);
 }
 
+void broadcast(int fd, char* buf) {
+	int tmp[100];
+	int idx = 0;
+	pthread_mutex_lock(&mutex);
+	for (int i = 0; i < 100; i++) {
+		if (clients[i] != -1 && clients[i] != fd)tmp[idx++] = clients[i];
+	}
+	pthread_mutex_unlock(&mutex);
+
+	for (int i = 0; i < idx; i++) {
+		send_package(tmp[i], buf);
+	}
+}
+
 void* handler(void* arg) {
 	int client_fd = (int)(intptr_t)arg;
+	if ((add_client(client_fd)) == -1) {
+		pthread_exit(NULL);
+	}
 	char buf[1024] = { 0 };
-	char confession[] = "Beth Love You";
+	//char confession[] = "Beth Love You";
 	while(1){
 		int len = recv_package(client_fd, buf, sizeof(buf));
 		//主要退出窗口:当客户端端口关闭，recv返回0->read_exact返回0->recv_package返回0
@@ -61,11 +117,15 @@ void* handler(void* arg) {
 		buf[len] = '\0';
 		printf("%s\n",buf);
 		//服务器中，server_fd是只能等待数据的接口，client_fd是发送的端口
-		send_package(client_fd, confession);
+		//send_package(client_fd, confession);
+		broadcast(client_fd, buf);
 	}
-	close(client_fd);
+	remove_client(client_fd);
 }
+
+
 int main() {
+	for (int i = 0; i < 100; i++)clients[i] = -1;
 	int server_fd = socket(AF_INET, SOCK_STREAM, 0);
 	struct sockaddr_in addr;
 	addr.sin_family = AF_INET;
@@ -75,6 +135,7 @@ int main() {
 	listen(server_fd, 5);
 	while (1) {
 		int client_fd = accept(server_fd, NULL, NULL);
+
 		pthread_t tid;
 		//该接口的第四个参数是void*类型，但是会出现一个数据竞争问题
 		//当handler还没来得及进行转型和赋值时，第二个客户端接入
