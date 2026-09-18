@@ -6,11 +6,26 @@
 #include<unistd.h>
 #include<stdint.h>
 #include<pthread.h>
+#include<signal.h>
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-void send_package(int fd, char* buf) {
+int write_exact(int fd, char* buf,size_t size) {
+	ssize_t ret = 0;
+	while (ret < size) {
+		ssize_t n = send(fd, buf + ret, size - ret,0);
+		if (n <= 0)return -1;
+		else if (n > 0)ret += n;
+	}
+	return ret;
+}
+
+int send_package(int fd, char* buf) {
 	uint32_t len = htonl(strlen(buf));
-	send(fd, &len, sizeof(len), 0);
-	send(fd, buf, strlen(buf),0);
+	int r = write_exact(fd, (char*)&len, sizeof(len));
+	if (r < 0)return -1;
+
+	r = write_exact(fd, buf, strlen(buf));
+	if (r < 0)return -1;
+	return r;
 }
 
 int read_exact(int fd, char* buf, size_t size) {
@@ -54,7 +69,7 @@ void* handler(void* arg) {
 			break;
 		}
 		if (len == -2) {
-			printf("package is over size");
+			printf("package is over size\n");
 			break;
 		}
 		buf[len] = '\0';
@@ -62,6 +77,8 @@ void* handler(void* arg) {
 	}
 }
 int main() {
+	signal(SIGPIPE, SIG_IGN);
+
 	int client_fd = socket(AF_INET, SOCK_STREAM, 0);
 	struct sockaddr_in addr;
 	addr.sin_family = AF_INET;
@@ -70,12 +87,27 @@ int main() {
 
 	connect(client_fd, (struct sockaddr*)&addr, sizeof(addr));
 
+	char name[32];
+	printf("Please enter your name:");
+	fgets(name, sizeof(name), stdin);
+	name[strcspn(name, "\n")] = '\0';
+	int s = send_package(client_fd, name);
+	if (s < 0) {
+		perror("Disconnect");
+		return 1;
+	}
+
 	pthread_t tid;
 	pthread_create(&tid, NULL, &handler, (void*)(intptr_t)client_fd);
 	pthread_detach(tid);
 	while (1) {
 		char Tell[1024];
-		scanf("%s", Tell);
-		send_package(client_fd, Tell);
+		fgets(Tell,sizeof(Tell),stdin);
+		Tell[strcspn(Tell, "\n")] = '\0';
+		s = send_package(client_fd, Tell);
+		if (s < 0) {
+			perror("Disconnect");
+			return 1;
+		}
 	}
 }
